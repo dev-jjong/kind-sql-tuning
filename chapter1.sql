@@ -53,20 +53,47 @@ select * from EMP;
 
 
     1.1.3 SQL 옵티마이저
+        [1] SQL 옵티마이저란?
+            사용자가 원하는 작업을 가장 효율적으로 수행할 수 있는 최적의 데이터 엑세스 경로를 선택해주는 DBMS의 핵심 엔진
+
+        [2] 옵티마이저 최적화 단계
+            - 사용자로부터 전달받은 쿼리를 수행하는 데 후보군이 될만한 실행계획들을 찾아낸다.
+            - 데이터 딕셔너리(Data Dictinary)에 미리 수집해 둔 오브젝트 통계 및 시스템 통계정보를 이용해 각 실행계획의 예상비용을 산정
+            - 최저 비용을 나타내는 실행계획을 선택
 
 
+    1.1.4 실행계획과 비용
+        [1] 실행계획이란?
+            - SQL 실행경로 미리보기
+            - SQL 옵티마이저가 생성한 처리절차를 사용자가 확인할 수 있게 트리 구조로 표현한 것
 
 */
 
-
-
-
-
-create table t
-as
+create table t as
 select d.no, e.*
-from scott.emp
-;
+from emp e, (select rownum no from dual connect by level <= 1000) d;
+select count(*) from t;
+create index t_x01 on t(deptno, no);
+create index t_x02 on t(deptno, job, no);
+
+-- cost = 2
+select * from t
+where deptno = 10
+and no = 1;
+
+-- cost = 3
+select /*+ index(t t_x02) */ * from t
+where deptno = 10
+and no = 1;
+
+-- cost = 19
+select /*+ full(t) */ * from t
+where deptno = 10
+and no = 1;
+
+-- cost(비용)이란 쿼리를 수행하는 동안 발생할 것으로 예상되는 I/O 횟수 또는 예상 소요시간을 표헌한 값
 
 
-select * from scott.emp;
+
+
+
