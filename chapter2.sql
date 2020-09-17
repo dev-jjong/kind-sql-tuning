@@ -77,6 +77,103 @@
 
 */
 
+--2.2 인덱스 기본 사용 방법
+-- 핵심내용 : 인덱스 기본 사용법은 인덱스를 Range Scan 하는 방법을 의미한다
+
+/*
+    2.2.1 인덱스를 사용한다는 것
+        - 인덱스 컬럼을 가공해도 인덱스를 사용할 수는 있지만, 스캔 시작점을 찾을 수 없고 멈출 수도 없어 리프 블록 전체를 스캔해야만한다.
+        
+    2.2.2 인덱스를 Range Scan 할 수 없는 이유
+        [1] 인덱스 컬럼을 가공했을 때 인덱스를 정상적으로 사용할 수 없는 이유는 인덱스 스캔 시작점을 찾을 수 없기 때문이다.
+        
+        [2] 인덱스를 사용할 수 없는 CASE
+            - where substr(생년월일, 5, 2) = '05'
+            - where nvl(주문수량, 0) < 100
+            - where 업체명 like '%대한%'
+            - where (전화번호 = :tel_no or 고객명 = :cust_nm)
+            - where 전화번호 in (:tel_no1, :tel_no2)
+            
+        [3] OR Expansion 이란?
+            - OR 조건식을 SQL 옵티마이저가 아래 형태로 변환하는 걸 말한다.
+            - 아래 예제를 보자
+                
+*/
+set autotrace on explain;
+
+create index e_x01 on emp(ename);
+create index e_x02 on emp(job);
+
+-- or 조건이라 index를 사용할 수 없어서 table full scan이 일어난다
+select *
+from emp
+where (ename = 'ALLEN' or job = 'PRESIDENT');
+/*--------------------------------------------------------------------------
+| Id  | Operation         | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------
+|   0 | SELECT STATEMENT  |      |     4 |    84 |     3   (0)| 00:00:01 |
+|*  1 |  TABLE ACCESS FULL| EMP  |     4 |    84 |     3   (0)| 00:00:01 |
+--------------------------------------------------------------------------*/
+
+
+-- OR Expansion 방법1. union all
+select *
+from emp
+where ename = 'ALLEN'
+union all
+select *
+from emp
+where job = 'PRESIDENT'
+and (ename <> 'ALLEN' or ename is null);
+/*--------------------------------------------------------------------------------------
+| Id  | Operation                    | Name  | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT             |       |     4 |    84 |     4   (0)| 00:00:01 |
+|   1 |  UNION-ALL                   |       |       |       |            |          |
+|   2 |   TABLE ACCESS BY INDEX ROWID| EMP   |     1 |    21 |     2   (0)| 00:00:01 |
+|*  3 |    INDEX RANGE SCAN          | E_X01 |     1 |       |     1   (0)| 00:00:01 |
+|*  4 |   TABLE ACCESS BY INDEX ROWID| EMP   |     3 |    63 |     2   (0)| 00:00:01 |
+|*  5 |    INDEX RANGE SCAN          | E_X02 |     3 |       |     1   (0)| 00:00:01 |
+--------------------------------------------------------------------------------------*/
+
+
+-- OR Expansion 방법2. use_concat 힌트를 줘서 위의 방법1을 유도한다.
+select /*+ use_concat */ *
+from emp
+where (ename = 'ALLEN' or job = 'PRESIDENT');
+/*--------------------------------------------------------------------------------------
+| Id  | Operation                    | Name  | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT             |       |     4 |    84 |     4   (0)| 00:00:01 |
+|   1 |  CONCATENATION               |       |       |       |            |          |
+|   2 |   TABLE ACCESS BY INDEX ROWID| EMP   |     1 |    21 |     2   (0)| 00:00:01 |
+|*  3 |    INDEX RANGE SCAN          | E_X01 |     1 |       |     1   (0)| 00:00:01 |
+|*  4 |   TABLE ACCESS BY INDEX ROWID| EMP   |     3 |    63 |     2   (0)| 00:00:01 |
+|*  5 |    INDEX RANGE SCAN          | E_X02 |     3 |       |     1   (0)| 00:00:01 |
+--------------------------------------------------------------------------------------*/
+
+
+
+/*
+    2.2.2 인덱스를 Range Scan 할 수 없는 이유 (이어서...)
+        [4] In-List Iterator 방식
+            - In-List 개수 만큼 index Range Scan을 반복하는 것이다.
+            - 아래 예제를 보자
+*/
+
+-- 이름이 ALLDN 이거나 KING 인사람 찾기시 INLIST ITERATOR가 동작한다.
+select *
+from emp
+where ename in ('ALLEN', 'KING');
+/*--------------------------------------------------------------------------------------
+| Id  | Operation                    | Name  | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT             |       |     2 |    42 |     2   (0)| 00:00:01 |
+|   1 |  INLIST ITERATOR             |       |       |       |            |          |
+|   2 |   TABLE ACCESS BY INDEX ROWID| EMP   |     2 |    42 |     2   (0)| 00:00:01 |
+|*  3 |    INDEX RANGE SCAN          | E_X01 |     2 |       |     1   (0)| 00:00:01 |
+--------------------------------------------------------------------------------------*/
+
 
 
 
