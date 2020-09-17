@@ -1,4 +1,6 @@
 ### 친절한 SQL 튜닝
-* 내용에 대한 정리는 블로그에 올립니다. (https://java7.tistory.com)
-* 챕터별로 실습한 SQL파일을 github에 commit 합니다.
+* Chapter1. SQL 파싱과 최적과 (9.15)
+* Chapter1. SQL 공유 및 재사용 (9.16)
+* Chapter1. 데이터 저장 구조 및 I/O 메커니즘 (9.16)
+* Chapter2. 인덱스 구조 및 탐색 (9.17)
 
