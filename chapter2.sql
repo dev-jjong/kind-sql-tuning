@@ -560,6 +560,202 @@ order by sal desc;
 */
 
 
+--2.3 인덱스 확장기능 사용법
+
+/* 
+    2.3.1 Index Range Scan
+        - B*Tree인덱스의 가장 일반적으로 정상적인 형태의 엑세스 방식
+        - 인덱스 루트에서 리프 블록까지 수직적으로 탐색한 후에 '필요한 범위(Range)만' 스캔한다.
+        - 인덱스를 Range Scan 하려면 선두 컬럼을 가공하지 않은 상태로 조건절에 사용해야 한다.
+*/
+
+set autotrace on;
+create index EMP_DEPTNO_NO on emp(deptno);
+
+select * from emp where deptno = 20;
+/*---------------------------------------------------------------------------------------------
+| Id  | Operation                   | Name          | Rows  | Bytes | Cost (%CPU)| Time     |
+---------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT            |               |     5 |   105 |     2   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID| EMP           |     5 |   105 |     2   (0)| 00:00:01 |
+|*  2 |   INDEX RANGE SCAN          | EMP_DEPTNO_NO |     5 |       |     1   (0)| 00:00:01 |
+---------------------------------------------------------------------------------------------*/
 
 
+
+/* 
+    2.3.2 Index Full Scan
+        [1] Index Full Scan 이란?
+            - 수직적 탐색없이 인덱스 리프 블록을 처음부터 끝까지 수평적으로 탐색하는 방식
+            - Index Full Scan은 대개 데이터 검색을 위한 최적의 인덱스가 없을 때 차선으로 선택된다.
+            
+*/
+
+create index EMP_ENAME_SAL_IDX on emp(ename, sal);
+
+select * from emp
+where sal > 2000
+order by ename;
+/*-------------------------------------------------------------------------------------------------
+| Id  | Operation                   | Name              | Rows  | Bytes | Cost (%CPU)| Time     |
+-------------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT            |                   |     1 |    21 |     2   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID| EMP               |     1 |    21 |     2   (0)| 00:00:01 |
+|*  2 |   INDEX FULL SCAN           | EMP_ENAME_SAL_IDX |     1 |       |     1   (0)| 00:00:01 |
+-------------------------------------------------------------------------------------------------*/
+
+
+/* 
+        [2] Index Full Scan 효용성
+            - 데이터 저장 공간은 '가로 x 세로' 즉, '컬럼 길이 x 레코드 수'에 의해 결정되므로 인덱스가 차지하는 면적은
+                테이블보다 훨씬 적다.
+            -  찾고자 하는 데이터가 전체 중 극히 일부라면 Table Full Scan 보다는 Index Full Scan을 통한 필러링이 효과적이다.
+            
+        [3] 인덱스를 이용한 소트 연산 생략
+            - Index Full Scan하면 Range Scan과 마찬가지로 결과집합이 인덱스 컬럼 순으로 정렬된다.
+        
+        [4] Index Full Scan시 주의점
+            - 아래 예제를 확인하자
+*/
+
+-- 대부분 사원이 SAL > 1000 조건을 만족하는 상황에서 Index Full Scan을 하면, 
+-- 거의 모든 레코드에 대해 테이블 엑세스가 발생하므로 Table Full Scan 보다 오히려 불리하다.
+-- first_rows 힌트 : 소트 연산을 생략함으로써 전체 집합 중 처음 일부를 빠르게 출력할 목적으로 옵티마이저가 Index Full Scan 방식을 선택한 것이다.
+drop index E_X01;
+
+select /*+ first_rows */ *
+from emp
+where sal > 1000
+order by ename;
+/*-------------------------------------------------------------------------------------------------
+| Id  | Operation                   | Name              | Rows  | Bytes | Cost (%CPU)| Time     |
+-------------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT            |                   |     1 |    21 |     2   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID| EMP               |     1 |    21 |     2   (0)| 00:00:01 |
+|*  2 |   INDEX FULL SCAN           | EMP_ENAME_SAL_IDX |     1 |       |     1   (0)| 00:00:01 |
+-------------------------------------------------------------------------------------------------*/
+
+
+/*
+    2.3.3 Index Unique Scan
+        - 수직적 탐색만으로 데이터를 찾는 스캔 방식
+        - Unique 인덱스를 '=' 조건으로 탐색하는 경우에 작동
+        - Unique 인덱스가 존재하는 컬럼은 중복 값이 입력되지 않게 DBMS가 데이터 정합성을 관리해 준다.
+*/
+
+/* 
+아래 구문은 이미 pk설정 및 pk_index가 존재하여 주석처리
+create unique index pk_emp on emp(empno);
+alter table emp add
+constraint pk_emp primary key(empno) using index pk_emp;
+*/
+
+select empno, ename from emp where empno = 7788;
+/*-------------------------------------------------------------------------------------------
+| Id  | Operation                   | Name        | Rows  | Bytes | Cost (%CPU)| Time     |
+-------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT            |             |     1 |    10 |     1   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID| EMP         |     1 |    10 |     1   (0)| 00:00:01 |
+|*  2 |   INDEX UNIQUE SCAN         | SYS_C003980 |     1 |       |     0   (0)| 00:00:01 |
+-------------------------------------------------------------------------------------------*/
+
+/*
+    2.3.4 Index Skip Scan
+        [1] Index Skip Scan 정의
+            - 인덱스 선두 컬럼이 조건절에 없어도 인덱스를 활용하는 새로운 스캔 방식
+            - 인덱스 선두 컬럼을 조건절에 사용하지 않으면 옵티마이저는 기본적으로 Table Full Scan을 선택한다.
+                Table Full Scan 보다 I/O를 줄일 수 있거나 정렬된 결과를 쉽게 얻을 수 있다면 , Index Skip Scan을 사용하기도 한다.
+            - 인덱스 선투 컬럼의 Distinct Value 개수가 적고(성별) 후행 컬럼의 Distinct Value 개수가 많을 때(고객번호) 유용하다.
+            - index_ss, no_index_ss 힌트
+            - index Skip Scan은 루트 또는 브랜치 블록에서 읽은 컬럼 값 정보를 이용해 조건절에 부합하는 레코드를 포함할 '가능성이 있는' 
+                리프 블록만 골라서 액세스하는 스캔 방식이다.
+        
+*/
+
+CREATE TABLE 사원(성별 varchar2(3), 연봉 number);
+INSERT INTO 사원 VALUES('남', 800);
+INSERT INTO 사원 VALUES('남', 1500);
+INSERT INTO 사원 VALUES('남', 5000);
+INSERT INTO 사원 VALUES('남', 8000);
+INSERT INTO 사원 VALUES('남', 10000);
+INSERT INTO 사원 VALUES('여', 3000);
+INSERT INTO 사원 VALUES('여', 5000);
+INSERT INTO 사원 VALUES('여', 7000);
+INSERT INTO 사원 VALUES('여', 10000);
+commit;
+
+CREATE INDEX 사원_IDX ON 사원(성별, 연봉);
+
+-- 성별+연봉으로 조회할 경우 Range Scan이 정상 작동한다.
+select * from 사원 where 성별 = '남' and 연봉 between 2000 and 4000;
+/*---------------------------------------------------------------------------
+| Id  | Operation        | Name   | Rows  | Bytes | Cost (%CPU)| Time     |
+---------------------------------------------------------------------------
+|   0 | SELECT STATEMENT |        |     1 |    16 |     1   (0)| 00:00:01 |
+|*  1 |  INDEX RANGE SCAN| 사원_ID|     1 |    16 |     1   (0)| 00:00:01 |
+---------------------------------------------------------------------------*/
+
+
+-- 이번에는 성별을 제외한 연봉만 조회 할 경우 Skip Scan을 유도해보자
+select *
+from 사원
+where 연봉 between 2000 and 4000;
+/*---------------------------------------------------------------------------
+| Id  | Operation        | Name   | Rows  | Bytes | Cost (%CPU)| Time     |
+---------------------------------------------------------------------------
+|   0 | SELECT STATEMENT |        |     1 |    16 |     1   (0)| 00:00:01 |
+|*  1 |  INDEX SKIP SCAN | 사원_ID|     1 |    16 |     1   (0)| 00:00:01 |
+---------------------------------------------------------------------------*/
+
+/*
+        [2] Index Skip Scan이 작동하기 위한 조건
+            a. Distinct Value 개수가 적은 선두 컬럼이 조건절에 없고 후헹 컬럼의 Distinct Value 개수가 많을 때 효과적이다.
+            
+            b. 일변업종별거래_PK : 업종유형코드 + 업종코드 + 기준일자
+                - 위에 인덱스에서 업종유형코드 + 기준일자로 조회하여도 ISS가 가능 (단 업종코드가 Distinct Value가 적어야함)
+                - 위에 인덱스에서 기준일자만 조회하여도 ISS가 가능 (단 업종코드가 Distinct Value가 적어야함)
+                
+        [3] 인덱스는 기본적으로 최적의 Index Range Scan을 목표로 설계해야 하며, 수행 횟수가 적은 SQL을 위해 인덱스를 추가하는 것이
+                비효율적 일 때 이들 스캔방식을 차선책으로 활용하는 전략이 바람직하다.
+           
+           
+           
+    2.3.5 Index Fast Full Scan
+        - Index Fast Full Scan은 Index Full Scan보다 빠르다
+        - 빠른 이유는 논리적인 인덱스 트리 구조를 무시하고 인덱스 세그먼트 전체를 Multiblock I/O방식으로 스캔하기 때문이다.
+        - index_ffs, no_index_ffs 힌트
+        - Multiblock I/O 방식을 사용하므로 디스크로부터 대량의 인덱스 블록을 읽어야 할 때 큰효과를 발휘한다.
+        ※ 쿼리에 사용한 컬럼이 모두 인덱스가 포함돼 있을 때만 사용할 수 있다.
+        - 인덱스가 파티션 돼 있지 않더라고 병렬쿼리가 가능하다.(이 때는 Direct Path I/O 방식 사용)
+        
+    2.3.6 Index Range Scan Descending
+        - 인덱스를 뒤에서 부터 앞으로 읽어준다.
+*/
+
+
+select * from emp where empno > 0 order by empno desc;
+/*--------------------------------------------------------------------------------------------
+| Id  | Operation                    | Name        | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT             |             |    14 |   294 |     2   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID | EMP         |    14 |   294 |     2   (0)| 00:00:01 |
+|*  2 |   INDEX RANGE SCAN DESCENDING| SYS_C003980 |    14 |       |     1   (0)| 00:00:01 |
+--------------------------------------------------------------------------------------------*/
+
+
+-- Max 값을 구하고자 할 때도 해당 컬럼에 인덱스가 있으면 인덱스를 뒤에서부터 읽어서 한건만 읽고 멈추는 실행계획이 작동한다.
+create index emp_x02 on emp(deptno, sal);
+
+select deptno, dname, loc
+        ,(select max(sal) from emp where deptno = d.deptno)
+from dept d;
+/*----------------------------------------------------------------------------------------
+| Id  | Operation                    | Name    | Rows  | Bytes | Cost (%CPU)| Time     |
+----------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT             |         |     4 |    80 |     3   (0)| 00:00:01 |
+|   1 |  SORT AGGREGATE              |         |     1 |    16 |            |          |
+|   2 |   FIRST ROW                  |         |     1 |    16 |     1   (0)| 00:00:01 |
+|*  3 |    INDEX RANGE SCAN (MIN/MAX)| EMP_X02 |     1 |    16 |     1   (0)| 00:00:01 |
+|   4 |  TABLE ACCESS FULL           | DEPT    |     4 |    80 |     3   (0)| 00:00:01 |
+----------------------------------------------------------------------------------------*/
 
