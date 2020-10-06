@@ -480,10 +480,49 @@ AND 평형타입 = 'A';
             ※ 즉 데이터 분포나 수직적 탐색 비용을 따져보고 BETWEEN을 In-List로 변경해야 한다.
             
     
-            
-            
-        
+    3.3.7 Index Skip Scan 활용
+        [1] Index Skip Scan 이란?
+            - 위의 경우처럼 BETWEEN을 IN-LIST조건으로 변환하면 도움이 되는 상황에 굳이 조건절을 바꾸지 않고도 같은 효과를 낼수 있는
+             방법이다.
+             
+        [2] 예제를 통해 알아보자
 */
+
+
+set autotrace on;
+
+create table 월별고객별판매집계
+as
+(select rownum 고객번호
+    , '2018' || lpad(ceil(rownum/10000), 2, '0') 판매월
+    , decode(mod(rownum, 12), 1, 'A', 'B') 판매구분
+    , round(dbms_random.value(1000,10000), -2) 판매금액
+from dual
+connect by level <= 120000);
+
+CREATE INDEX 판매집계_IDX1 ON 월별고객별판매집계(판매구분, 판매월);
+
+SELECT count(*) 
+FROM 월별고객별판매집계 
+WHERE 판매구분 ='A'
+AND 판매월 BETWEEN '201801' AND '201812';
+/*-------------------------------------------------------------------------------
+| Id  | Operation         | Name      | Rows  | Bytes | Cost (%CPU)| Time     |
+-------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT  |           |     1 |    10 |     2   (0)| 00:00:01 |
+|   1 |  SORT AGGREGATE   |           |     1 |    10 |            |          |
+|*  2 |   INDEX RANGE SCAN| 판매집계_I|  9264 | 92640 |     2   (0)| 00:00:01 |
+-------------------------------------------------------------------------------*/
+
+
+CREATE INDEX 판매집계_IDX2 ON 월별고객별판매집계(판매월, 판매구분);
+
+SELECT /*+ index(t 판매집계_IDX2) */count(*) 
+FROM 월별고객별판매집계 t
+WHERE 판매구분 ='A'
+AND 판매월 BETWEEN '201801' AND '201812';
+
+
 
 
 
